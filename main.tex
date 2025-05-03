@@ -13,19 +13,22 @@
 \begin{document}
     %% титульник
     \input{include/title.tex}
-    %% аннотоция
+    %% аннотация
+    \fontsize{14}{21}\selectfont
     \input{parts/Annotation.tex}
     %% содержание
+    \fontsize{14}{19}\selectfont
     \tableofcontents{}
     \newpage
 
-    % \fontsize{14}{16}\selectfont
-    \input{parts/Chapter0.tex} %% Введение
-    \input{parts/Chapter1.tex} %% Постановка задачи
-    \input{parts/Chapter2.tex} %% Обзор существующих решений
-    \input{parts/Chapter3.tex} %% Исследование и построение решения задачи
-    \input{parts/Chapter4.tex} %% Описание практической части
-    \input{parts/Chapter5.tex} %% Заключение
+    \fontsize{14}{21}\selectfont
+    \input{parts/Intro.tex} %% Введение
+    \input{parts/Goal.tex} %% Постановка задачи
+    \input{parts/RISC-V.tex} %% Обзор архитектуры
+%     \input{parts/Chapter2.tex} %% Обзор существующих решений
+%     \input{parts/Chapter3.tex} %% Исследование и построение решения задачи
+%     \input{parts/Chapter4.tex} %% Описание практической части
+%     \input{parts/Chapter5.tex} %% Заключение
 
     %% НЕ ТРОГАЙТЕ!!!
     \nocite{*}

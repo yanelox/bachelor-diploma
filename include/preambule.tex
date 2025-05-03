@@ -24,12 +24,9 @@
 
 %% Настройка размеров шрифтов
 \makeatletter
-\setlength{\headheight}{28pt}
-%% TODO: мне не удалось разобраться, как грамотно подбирать второе число в 
-%% \@setfontsize\*, но ряд эксппериментов показывает, что "10" выравнивает текст весьма прилично :)
 \renewcommand\Huge{\@setfontsize\Huge{14pt}{10}}
-\renewcommand\huge{\@setfontsize\huge{14pt}{10}}
-\renewcommand\Large{\@setfontsize\Large{14pt}{10}}
+\renewcommand\huge{\@setfontsize\huge{14pt}{21}}
+\renewcommand\Large{\@setfontsize\Large{14pt}{21pt}}
 \renewcommand\large{\@setfontsize\large{12pt}{10}}
 \makeatother
 
@@ -43,7 +40,7 @@
 \makeatother
 
 %% Работа с картинками
-\usepackage{caption}
+\usepackage[font=huge]{caption}
 \captionsetup{justification=centering} % центрирование подписей к картинкам
 \usepackage{graphicx}                  % вставки рисунков
 \graphicspath{{images/}{images2/}}     % папки с картинками
@@ -65,7 +62,7 @@
 
 %% TikZ
 \usepackage{tikz}
-\usetikzlibrary{graphs,graphs.standard}
+\usetikzlibrary{graphs,graphs.standard,decorations.pathreplacing}
 
 %% Верхний колонтитул
 \usepackage{fancyhdr}
@@ -80,13 +77,21 @@
 \usepackage{caption} % пакет для подписей к рисункам, в частности, для работы caption*
 \usepackage{listings} % пакет для листингов с кодом
 \lstset{              % настройки для лисингов с кодом
-basicstyle=\small\ttfamily,
+basicstyle=\ttfamily,
 columns=flexible,
-breaklines=true
+breaklines=true,
+captionpos=b
 }
+\usepackage[font=huge]{subcaption}
 
 % Hyperref (для ссылок внутри  pdf)
 \usepackage[unicode, pdftex]{hyperref}
 
 % Отступ перед первым абзацем в каждом разделе
 \usepackage{indentfirst}
+
+\usepackage{sectsty}
+\sectionfont{\fontsize{16}{21}\selectfont}
+\subsectionfont{\fontsize{14}{21}\selectfont}
+\subsubsectionfont{\fontsize{14}{21}\selectfont}
+\paragraphfont{\fontsize{14}{21}\selectfont}
