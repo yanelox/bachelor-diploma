@@ -59,4 +59,107 @@ DWARF -- это соврменный формат отладочной инфо�
 Стандарт DWARF разработан так, чтобы быть применимым к множеству существующих языков, а также
 иметь возможности к расширению для будущих языков.
 
+\subsubsection {DIE}
+\label{gdb:dwarf:die}
+
+Запись отладочной информации (Debugging Information Entry, DIE) -- это базовая единица
+данных в формате DWARF. Записи отладочной информации хранятся в секции \texttt{.debug\_info}
+и/или в секции \texttt{.debug\_info.dwo} объектного файла.
+
+DWARF использует наборы таких записей, чтобы описать структуру программы. Каждая запись
+состоит из тега (tag), определяющего тип описываемой сущности (например функция, переменная
+или название типа), и атрибутов, задающих конкретные свойства.
+
+Рассмотрим генерацию DWARF информации на конкретном примере. Здесь и далее для компиляции
+я буду использовать LLVM Clang 19.1.0 (если не указано иное) для архитектуры RISC-V,
+а для наглядного отображения DWARF информации -- инструмент llvm-dwarfdump.
+Данный инструмент сканирует DWARF секции в
+объектных файлах и выводит содержимое в удобочитаемом виде.
+
+Итак, возьмем простую функцию с Листинга \ref{lst:simple_example} и посмотрим, какую
+DWARF информацию генерирует для нее компилятор.
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Пример простейшей функции, label=lst:simple_example]
+int foo (char a, int b[3], float *c) {
+	return 42;
+}
+\end{lstlisting}
+\end{samepage}
+
+Для данной функции будет сгенерирована следующая DWARF информация.
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption={Часть сгенерированной DWARF-информации, соответствующая функции foo},
+	label=lst:simple_example_dwarf]
+0x00000091:   DW_TAG_subprogram
+                DW_AT_low_pc	(0x0000000000000654)
+                DW_AT_high_pc	(0x0000000000000674)
+                DW_AT_frame_base	(DW_OP_reg8 X8)
+                DW_AT_name	("foo")
+                DW_AT_decl_file	("/app/example.c")
+                DW_AT_decl_line	(1)
+                DW_AT_prototyped	(true)
+                DW_AT_type	(0x000000d1 "int")
+                DW_AT_external	(true)
+
+0x000000a0:     DW_TAG_formal_parameter
+                  DW_AT_location	(DW_OP_fbreg -17)
+                  DW_AT_name	("a")
+                  DW_AT_decl_file	("/app/example.c")
+                  DW_AT_decl_line	(1)
+                  DW_AT_type	(0x000000d5 "char")
+
+0x000000ab:     DW_TAG_formal_parameter
+                  DW_AT_location	(DW_OP_fbreg -32)
+                  DW_AT_name	("b")
+                  DW_AT_decl_file	("/app/example.c")
+                  DW_AT_decl_line	(1)
+                  DW_AT_type	(0x000000d9 "int *")
+
+0x000000b6:     DW_TAG_formal_parameter
+                  DW_AT_location	(DW_OP_fbreg -40)
+                  DW_AT_name	("c")
+                  DW_AT_decl_file	("/app/example.c")
+                  DW_AT_decl_line	(1)
+                  DW_AT_type    (0x000000de "float *")
+
+...
+
+0x000000d1:   DW_TAG_base_type
+                DW_AT_name	("int")
+                DW_AT_encoding	(DW_ATE_signed)
+                DW_AT_byte_size	(0x04)
+
+0x000000d5:   DW_TAG_base_type
+                DW_AT_name	("char")
+                DW_AT_encoding	(DW_ATE_unsigned_char)
+                DW_AT_byte_size	(0x01)
+
+0x000000d9:   DW_TAG_pointer_type
+                DW_AT_type	(0x000000d1 "int")
+
+0x000000de:   DW_TAG_pointer_type
+                DW_AT_type	(0x000000e3 "float")
+
+0x000000e3:   DW_TAG_base_type
+                DW_AT_name	("float")
+                DW_AT_encoding	(DW_ATE_float)
+                DW_AT_byte_size	(0x04)
+\end{lstlisting}
+\end{samepage}
+
+На Листинге \ref{lst:simple_example_dwarf} можно увидеть тег \texttt{DW\_TAG\_subprogram},
+указывающий на то, что данная запись описывает некоторую функцию. По тегу \texttt{DW\_AT\_name}
+мы можем определить, что это функция с именем \texttt{foo}.
+
+Атрибуты \texttt{DW\_AT\_low\_pc} и \texttt{DW\_AT\_high\_pc} описывают диапазон адресов в машинном
+коде, в котором располагается данная функция.
+
+Содержимое \texttt{DW\_AT\_frame\_base} описывает значение базового адреса фрейма данной
+функции. Для данной функции адрес ее фрейма будет располагаться на регистре \texttt{x8}.
+
+Для описания типа возвращаемого функцией значения, используется атрибут \texttt{DW\_AT\_type}
+
+
 \newpage
