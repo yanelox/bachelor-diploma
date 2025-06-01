@@ -9,17 +9,17 @@ GDB (GNU Project debugger) -- отладчик, программа, позвол
 GDB поддерживает отладку программ, написанных на следующих языках:
 
 \begin{itemize}
-	\item Ada
-	\item Assembly
-	\item C/C++
-	\item D
-	\item Fortran
-	\item Go
-	\item Objective-C
-	\item OpenCL
-	\item Modula-2
-	\item Pascal
-	\item Rust
+  \item Ada
+  \item Assembly
+  \item C/C++
+  \item D
+  \item Fortran
+  \item Go
+  \item Objective-C
+  \item OpenCL
+  \item Modula-2
+  \item Pascal
+  \item Rust
 \end{itemize}
 
 \subsection {Основные возможности}
@@ -159,7 +159,130 @@ int foo (char a, int b[3], float *c) {
 Содержимое \texttt{DW\_AT\_frame\_base} описывает значение базового адреса фрейма данной
 функции. Для данной функции адрес ее фрейма будет располагаться на регистре \texttt{x8}.
 
-Для описания типа возвращаемого функцией значения, используется атрибут \texttt{DW\_AT\_type}
+Для описания типа возвращаемого функцией значения, используется атрибут \texttt{DW\_AT\_type}.
 
+\subsection {Необходимая информация об исходном коде GDB}
+\label{gdb:internals}
+
+В данном разделе я приведу информацию о некоторых функциях и структурах данных
+исходного кода GDB, необходимых для понимания происходящего.
+
+\begin{itemize}
+
+\item \texttt{type} --структура, описывающая конкретный экземпляр типа.
+Некоторые методы данной структуры:
+
+\begin{itemize}
+  \item \texttt{code} -- код данного типа. Например, TYPE\_CODE\_INT, 
+
+    TYPE\_CODE\_ARRAY или TYPE\_CODE\_TYPEDEF.
+
+  \item \texttt{name} -- имя данного типа.
+
+  \item \texttt{length} -- размер типа в байтах.
+
+  \item \texttt{target\_type} -- метод, возвращающий указатель на объект 
+    \texttt{struct type}, т.~е. информацию о каком-то другом типе. Интерпретировать
+    информацию об этом новом типе данных следует в зависимости от исходного типа.
+    Например, если исходный тип это некоторый массив (\texttt{code} возвращает TYPE\_CODE\_ARRAY),
+    то \texttt{target\_type} -- это тип элементов, из которых этот массив состоит.
+    В другом случае, если исходный тип является синонимом типа (\texttt{code} возвращает TYPE\_CODE\_TYPEDEF),
+    то \texttt{target\_type} -- это тот тип, синонимом которого он является.
+
+\end{itemize}
+
+\item Структура \texttt{riscv\_arg\_info} -- хранит информацию об аргументе функции: его значение, тип, 
+      расположение (на регистре/нескольких регистрах или в памяти), размер.
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Структура riscv\_arg\_info, label=lst:struct:riscv_arg_info]
+struct riscv_arg_info
+{
+  const gdb_byte *contents;
+  int length;
+  int align;
+
+  struct type *type;
+
+  struct location
+  {
+    enum location_type
+    {
+      in_reg,
+      in_several_regs,
+      on_stack,
+    } loc_type;
+
+    union
+    {
+      int regno;
+      int offset;
+    } loc_data;
+
+    int c_length;
+    int c_offset;
+  } argloc[2];
+
+  bool is_unnamed;
+};
+\end{lstlisting}
+\end{samepage}
+
+\item Структура \texttt{riscv\_call\_info} -- содержит информацию о том, куда можно поместить аргументы функции, 
+      отслеживает свободные регистры и области в памяти.
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Структура riscv\_call\_info, label=lst:struct:riscv_call_info]
+struct riscv_call_info
+{
+  riscv_call_info (struct gdbarch *gdbarch)
+    : int_regs (RISCV_A0_REGNUM, RISCV_A0_REGNUM + 7),
+      float_regs (RISCV_FA0_REGNUM, RISCV_FA0_REGNUM + 7),
+      vector_regs (RISCV_V0_REGNUM + 8, RISCV_V0_REGNUM + 23)
+  {
+    xlen = riscv_abi_xlen (gdbarch);
+    flen = riscv_abi_flen (gdbarch);
+    vlenb = riscv_abi_vlenb (gdbarch);
+
+    /* Reduce the number of integer argument registers when using the
+    embedded abi (i.e. rv32e).  */
+    if (riscv_abi_embedded (gdbarch))
+      int_regs.last_regnum = RISCV_A0_REGNUM + 5;
+
+    /* Disable use of floating point registers if needed.  */
+    if (!riscv_has_fp_abi (gdbarch))
+      float_regs.next_regnum = float_regs.last_regnum + 1;
+
+    /* Disable use of vector registers if needed.  */
+    if (!riscv_has_vector_regs (gdbarch))
+      vector_regs.available_intervals.clear ();
+  }
+
+  /* Track the memory areas used for holding in-memory arguments to a
+  call.  */
+  struct riscv_memory_offsets memory;
+
+  /* Holds information about the next integer register to use for passing
+  an argument.  */
+  struct riscv_arg_reg int_regs;
+
+  /* Holds information about the next floating point register to use for
+  passing an argument.  */
+  struct riscv_arg_reg float_regs;
+
+  /* Holds information about the next vector register to use for
+  passing an argument.  */
+  struct riscv_vector_arg_reg vector_regs;
+
+  /* The XLEN and FLEN are copied in to this structure for convenience, and
+  are just the results of calling RISCV_ABI_XLEN and RISCV_ABI_FLEN.  */
+  int xlen;
+  int flen;
+  int vlenb;
+};
+\end{lstlisting}
+\end{samepage}
+
+\end{itemize}
 
 \newpage

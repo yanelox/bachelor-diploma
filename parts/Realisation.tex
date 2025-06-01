@@ -1,4 +1,341 @@
 \section{Описание практической работы}
 \label{sec:work} \index{work}
 
+\subsection {Исправление генерации отладочной информации в компиляторе LLVM}
+\label{work:clang_fix}
+
+В процессе проведения различных экспериментов с генерацией отладочной информации,
+было обнаружено, что для кортежных типов, таких как vint8m4x2\_t, компилятор LLVM
+генерирует некорректную отладочную информацию о размере таких типов.
+Компилятор не учитывал множитель \texttt{NFIELDS}.
+
+Ниже приведена часть исходного кода LLVM с исправлением этой ошибки:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Исправление генерации информации о размере некоторых типов, label=lst:code:llvm_fix]
+bool Fractional = false;
+unsigned LMUL;
+unsigned NFIELDS = Info.NumVectors;
+unsigned FixedSize = ElementCount * SEW;
+if (Info.ElementType == CGM.getContext().BoolTy) {
+    // Mask type only occupies one vector register.
+    LMUL = 1;
+} else if (FixedSize < 64) {
+    // In RVV scalable vector types, we encode 64 bits in the fixed part.
+    Fractional = true;
+    LMUL = 64 / FixedSize;
+} else {
+    LMUL = FixedSize / 64;
+}
+
+// Element count = (VLENB / SEW) x LMUL x NFIELDS
+SmallVector<uint64_t, 12> Expr(
+    // The DW_OP_bregx operation has two operands: a register which is
+    // specified by an unsigned LEB128 number, followed by a signed LEB128
+    // offset.
+    {llvm::dwarf::DW_OP_bregx, // Read the contents of a register.
+    4096 + 0xC22,             // RISC-V VLENB CSR register.
+    0, // Offset for DW_OP_bregx. It is dummy here.
+    llvm::dwarf::DW_OP_constu,
+    SEW / 8, // SEW is in bits.
+    llvm::dwarf::DW_OP_div, llvm::dwarf::DW_OP_constu, LMUL});
+if (Fractional)
+    Expr.push_back(llvm::dwarf::DW_OP_div);
+else
+    Expr.push_back(llvm::dwarf::DW_OP_mul);
+// NFIELDS multiplier
+if (NFIELDS > 1)
+    Expr.append({llvm::dwarf::DW_OP_constu, NFIELDS, 
+                 llvm::dwarf::DW_OP_mul});
+// Element max index = count - 1
+Expr.append({llvm::dwarf::DW_OP_constu, 1, 
+             llvm::dwarf::DW_OP_minus});
+\end{lstlisting}
+\end{samepage}
+
+\subsection {Реализация в GDB}
+\label{work:realisation}
+
+Для того, чтобы поддержать RISC-V Vector Calling Convention в отладчике GDB, необходимо
+было реализовать корректную передачу аргументов в функцию перед ее вызовом. Вторым требованием
+является сохранение значений определенных регистров и их восстановление после окончание
+исполнения функции, однако GDB самостоятельно сохраняет значения всех регистров перед вызовом
+и восстанавливает их после, поэтому реализовывать данное требование не потребовалось.
+
+Итак, в первую очередь, для определения векторного типа по его имени была написана следующая простая функция:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Функция для определения векторных типов, label=lst:func:is_rvv_type]
+static bool
+is_rvv_type (struct type *type)
+{
+  if (type)
+  {
+    if (type->name () && 
+        (strncmp (type->name (), "__rvv", 5) == 0))
+      return true;
+    else if (type->code () == TYPE_CODE_TYPEDEF)
+      return is_rvv_type (type->target_type ());
+  }
+
+  return false;
+}
+\end{lstlisting}
+\end{samepage}
+
+Например, тип \_\_rvv\_int8m1\_t (vint8m1\_t).
+
+Для выбора способа передачи переменной векторного типа (через регистры или через память) была написана функция:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Функция для определения способа передачи значения аргумента, 
+	           label=lst:func:riscv_call_arg_vector, breaklines=false]
+static void
+riscv_call_arg_vector (struct riscv_arg_info *ainfo,
+                       struct riscv_call_info *cinfo,
+                       struct type *func_arg_type)
+{
+  gdb_assert (((ainfo->length % cinfo->vlenb) == 0)
+                || ainfo->length < cinfo->vlenb);
+
+  if (!riscv_assign_vec_reg_location (ainfo, &cinfo->vector_regs,
+                                      func_arg_type, cinfo->vlenb))
+    {
+      // Try to pass value by reference
+      ainfo->argloc[0].loc_type = riscv_arg_info::location::by_ref;
+      cinfo->memory.ref_offset = align_up (cinfo->memory.ref_offset, 
+                                           ainfo->align);
+      ainfo->argloc[0].loc_data.offset = cinfo->memory.ref_offset;
+      cinfo->memory.ref_offset += ainfo->length;
+      ainfo->argloc[0].c_length = ainfo->length;
+
+      if (!riscv_assign_reg_location (&ainfo->argloc[1], 
+                                      &cinfo->int_regs, 
+                                      cinfo->xlen, 0))
+        riscv_assign_stack_location (&ainfo->argloc[1], 
+                                     &cinfo->memory,
+                                     cinfo->xlen, cinfo->xlen);
+    }
+}
+\end{lstlisting}
+\end{samepage}
+
+В первую очередь пытаемся разместить значение на векторных регистрах (в соответствии с RISC-V Vector
+Calling Convention) с помощью функции \texttt{riscv\_assign\_vec\_reg\_location} (подробное описание
+функции будет ниже). В случае неудачи, пытаемся передать значение по адресу, который, в свою очередь,
+пытаемся сначала разместить на регистре общего назначения, используя  \texttt{riscv\_assign\_reg\_location}, 
+или, на стеке, с помощью \texttt{riscv\_assign\_stack\_location}.
+
+Реализация функции \texttt{riscv\_assign\_vec\_reg\_location}:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Функция для выбора набора регистров для передачи аргумента, 
+			   label=lst:func:riscv_assign_vec_reg_location, breaklines=false]
+static bool
+riscv_assign_vec_reg_location (struct riscv_arg_info *ainfo,
+                               struct riscv_vector_arg_reg *reg,
+                               struct type *func_arg_type, int vlenb)
+{
+  /* Amount of data that is stored on one register */
+  int data_length = vlenb;   
+  
+  struct riscv_arg_info::location *loc0 = &ainfo->argloc[0];
+  struct riscv_arg_info::location *loc1 = &ainfo->argloc[1];
+   
+  const char *func_arg_type_name
+    = (func_arg_type) ? func_arg_type->name () : nullptr;
+   
+  /* Try to get info about LMUL*/
+  const char *lmul_pos = (func_arg_type_name) ? 
+                          strstr (func_arg_type_name, "m") : nullptr;
+  bool is_fractional_lmul = (lmul_pos && 
+                             strncmp (lmul_pos, "mf", 2) == 0) ? 
+                             true : false;
+  int lmul = (lmul_pos) ? 
+              ((is_fractional_lmul) ? 
+                lmul_pos[2] - '0' : lmul_pos[1] - '0') : 1;
+   
+  /* If it is a segment type, it's name should ends with `xN_t`, 
+     where N is * NFIELDS*/
+  const char *nfields_pos = (func_arg_type_name) ? 
+                          strstr (func_arg_type_name, "x") : nullptr;
+  int nfields = (nfields_pos) ? nfields_pos[1] - '0' : 1;
+   
+  int num_required_regs = (ainfo->length <= vlenb) ? 
+                           1 : ainfo->length / vlenb;
+   
+  if (is_fractional_lmul)
+    {
+      num_required_regs = nfields;
+      data_length = data_length / lmul;
+    }
+   
+  int first_regnum = -1;
+   
+  /* Representation of vector segmented types, like vint32m4x2_t,
+      is different in Clang and GCC.
+      In Clang, all types are arrays.
+      In GCC, segmented types are struct's, 
+      other vector types are arrays. */
+  if (ainfo->type->code () == TYPE_CODE_ARRAY)
+    {
+      if (ainfo->type->target_type ()->code () == TYPE_CODE_BOOL)
+        first_regnum = reg->try_use_v0 ();
+      else
+        first_regnum = reg->get_interval_start (num_required_regs, 
+                                                nfields);
+    }
+  else if (ainfo->type->code () == TYPE_CODE_STRUCT)
+    {
+      first_regnum = reg->get_interval_start (num_required_regs, 
+                                              nfields);
+    }
+   
+  int last_regnum = first_regnum + num_required_regs - 1;
+   
+  if (first_regnum != -1)
+    {
+      loc0->loc_type = riscv_arg_info::location::in_several_regs;
+      loc0->loc_data.regno = first_regnum;
+      loc0->c_length = data_length;
+      loc0->c_offset = 0;
+
+      loc1->loc_type = riscv_arg_info::location::in_several_regs;
+      loc1->loc_data.regno = last_regnum;
+      loc1->c_length = 0;
+      loc1->c_offset = 0;
+   
+      return true;
+    }
+   
+  return false;
+}
+\end{lstlisting}
+\end{samepage}
+
+В данной функции мы сначала определяем параметры LMUL и NFIELDS из названия типа,
+для того, чтобы определить количество необходимых нам регистров. Далее, вызывая
+метод \texttt{get\_interval\_start} у объекта \texttt{struct riscv\_vector\_arg\_reg *reg},
+который сохраняет в себе информацию об уже занятых регистрах, мы получаем номер первого
+регистра в наборе (и вычисляем номер последнего регистра), в котором будет сохранено 
+необходимое значение.
+
+Как было сказано выше, для сохранения информации об уже занятых регистрах, была
+написана структура данных \texttt{riscv\_vector\_arg\_reg}:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Структура для хранения информации о свободных векторных регистрах, 
+			label=lst:struct:riscv_vector_arg_reg, breaklines=false]
+struct riscv_vector_arg_reg_interval
+{
+  int first;
+  int last;
+};
+
+struct riscv_vector_arg_reg
+{
+  riscv_vector_arg_reg (int first, int last)
+      : available_intervals{ { first, last } }
+  {
+    /* Nothing. */
+  }
+
+  int
+  get_interval_start (int count, int NFIELDS = 1)
+  {
+    gdb_assert (count % NFIELDS == 0);
+
+    int LMUL = count / NFIELDS;
+    for (auto cur_interval = available_intervals.begin ();
+         cur_interval != available_intervals.end (); ++cur_interval)
+      {
+        int cur_first = cur_interval->first;
+        int cur_last = cur_interval->last;
+        if ((cur_first - RISCV_V0_REGNUM) % LMUL != 0) 
+             /* According to RISC-V Vector ABI,
+             first register number should be
+             a multiple of LMUL */
+          {
+            cur_first -= (cur_first - RISCV_V0_REGNUM) % LMUL;
+            cur_first += LMUL;
+          }
+
+        if ((cur_last - cur_first + 1) >= count)
+          {
+          if (cur_first > cur_interval->first)
+            {
+              available_intervals.insert 
+                (cur_interval, { cur_interval->first, cur_first - 1 });
+            }
+
+            cur_interval->first = cur_first + count;
+
+            return cur_first;
+	  }
+      }
+
+    return -1;
+  }
+
+  int
+  try_use_v0 ()
+  {
+    if (is_v0_used)
+      return get_interval_start (1);
+    else
+      {
+        is_v0_used = true;
+        return RISCV_V0_REGNUM;
+      }
+  }
+
+  bool is_v0_used
+      = false; /* To pass masks we should use v0, if it's available */
+
+  std::list<riscv_vector_arg_reg_interval> available_intervals;
+};
+\end{lstlisting}
+\end{samepage}
+
+Данные о незанятых векторных регистров хранятся в виде интервалов вида 
+\texttt{\{first, last\}} с номерами регистров. В случае, если нам необходимо
+выделить какой-то набор регистров, лежащий в интервале, этот интервал
+разбивается на 3 части: необходимый нам набор, интервал до и интервал после
+необходимого набора. Эти новые интервалы сохраняются взамен старого интервала\
+(в случае, если они не являются пустыми).
+
+Кроме того, отдельно отслеживается занятость регистра \texttt{v0}, т.~к. он
+используется для передачи векторных масок.
+
+Последняя важная часть, это обработка введенного варианта расположения
+переменной на регистре \texttt{riscv\_arg\_info::location::in\_several\_regs}
+в функции \texttt{riscv\_push\_dummy\_call}:
+
+\begin{samepage}
+\begin{lstlisting}[language=C++, caption=Запись необходимого значения в соответствующие регистры в кэше, 
+		label=lst:switch:in_several_regs, breaklines=false]
+case riscv_arg_info::location::in_several_regs:
+{
+  const gdb_byte *cur_contents = info->contents;
+  int cur_c_length = info->argloc[0].c_length;
+  for (int cur_regno = info->argloc[0].loc_data.regno;
+       cur_regno <= info->argloc[1].loc_data.regno; cur_regno++)
+    {
+      riscv_regcache_cooked_write (cur_regno, cur_contents,
+                                   cur_c_length, regcache,
+                                   call_info.flen);
+      cur_contents += cur_c_length;
+    }
+
+  second_arg_length = 0;
+}
+\end{lstlisting}
+\end{samepage}
+
+
+
+
+
+
+
 \newpage

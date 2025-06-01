@@ -11,7 +11,9 @@ PARTS = parts/*.tex
 
 MAIN = main.tex
 
-%.pdf: $(MAIN) $(PARTS) $(INCLUDES)
+LIB = references.bib
+
+%.pdf: $(MAIN) $(PARTS) $(INCLUDES) $(LIB)
 	latexrun/latexrun $*
 
 clean:
