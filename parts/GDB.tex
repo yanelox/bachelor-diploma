@@ -1,29 +1,12 @@
 \section{Отладчик GDB}
 \label{sec:gdb} \index{gdb}
 
-\subsection {Основная информация}
+\subsection {Основная информация и возможности}
 \label{gdb:general}
 
 GDB (GNU Project debugger) -- отладчик, программа, позволяющая анализировать и управлять
 исполнением другой программы для нахождения ошибок в коде.
-GDB поддерживает отладку программ, написанных на следующих языках:
-
-\begin{itemize}
-  \item Ada
-  \item Assembly
-  \item C/C++
-  \item D
-  \item Fortran
-  \item Go
-  \item Objective-C
-  \item OpenCL
-  \item Modula-2
-  \item Pascal
-  \item Rust
-\end{itemize}
-
-\subsection {Основные возможности}
-\label{gdb:powers}
+GDB поддерживает отладку программ, написанных множестве языков.
 
 GDB позволяет запускать программы под своим управлением, анализировать и управлять их
 исполнением.
@@ -58,9 +41,6 @@ DWARF -- это современный формат отладочной инф�
 
 Стандарт DWARF разработан так, чтобы быть применимым к множеству существующих языков, а также
 иметь возможности к расширению для будущих языков.
-
-\subsubsection {DIE}
-\label{gdb:dwarf:die}
 
 Запись отладочной информации (Debugging Information Entry, DIE) -- это базовая единица
 данных в формате DWARF. Записи отладочной информации хранятся в секции \texttt{.debug\_info}
